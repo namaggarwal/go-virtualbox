@@ -1,47 +1,69 @@
 package virtualbox
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
 )
+
+// VirtualMachine ...
+type VirtualMachine struct {
+	UUID       string
+	Name       string
+	GuestOS    string
+	ConfigFile string
+	BaseFolder string
+}
 
 // IVBoxManage ...
 type IVBoxManage interface {
-	CreateVM(name string, osType string, baseFolder string, shouldRegister bool) error
+	CreateVM(vm VirtualMachine, shouldRegister bool) (string, error)
 	StartVM(name string) error
 	AddStorageCtl(vmName string, name string, ctlType string, controller string) error
 	AttachStorage(vmName string, controllerName string, port int32, device int32, storageType string, medium string) error
 	CreateMedium(mediumType string, filePath string, size int32, format string) error
+	VMInfo(name string) (*VirtualMachine, error)
 }
 
 // VBoxManage ...
 type vBoxManage struct {
 }
 
-func (m *vBoxManage) CreateVM(name string, osType string, baseFolder string, shouldRegister bool) error {
+func (m *vBoxManage) CreateVM(vm VirtualMachine, shouldRegister bool) (string, error) {
 	cmd := exec.Command("VBoxManage")
 	cmd.Args = append(cmd.Args, "createvm")
 	cmd.Args = append(cmd.Args, "--name")
-	cmd.Args = append(cmd.Args, name)
-	cmd.Args = append(cmd.Args, "--ostype")
-	cmd.Args = append(cmd.Args, osType)
-	cmd.Args = append(cmd.Args, "--basefolder")
-	cmd.Args = append(cmd.Args, baseFolder)
+	cmd.Args = append(cmd.Args, vm.Name)
+	if vm.GuestOS != "" {
+		cmd.Args = append(cmd.Args, "--ostype")
+		cmd.Args = append(cmd.Args, vm.GuestOS)
+	}
+
+	if vm.BaseFolder != "" {
+		cmd.Args = append(cmd.Args, "--basefolder")
+		cmd.Args = append(cmd.Args, vm.BaseFolder)
+	}
+
 	if shouldRegister {
 		cmd.Args = append(cmd.Args, "--register")
 	}
-	_, err := m.execute(cmd)
+	out, _, err := m.execute(cmd)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return nil
+	info := m.parseOutput(out)
+	return info["UUID"], nil
 }
 
 func (m *vBoxManage) StartVM(name string) error {
 	cmd := exec.Command("VBoxManage")
 	cmd.Args = append(cmd.Args, "startvm")
 	cmd.Args = append(cmd.Args, name)
-	_, err := m.execute(cmd)
+	_, _, err := m.execute(cmd)
 	if err != nil {
 		return err
 	}
@@ -58,7 +80,7 @@ func (m *vBoxManage) AddStorageCtl(vmName string, name string, ctlType string, c
 	cmd.Args = append(cmd.Args, ctlType)
 	cmd.Args = append(cmd.Args, "--controller")
 	cmd.Args = append(cmd.Args, controller)
-	_, err := m.execute(cmd)
+	_, _, err := m.execute(cmd)
 	if err != nil {
 		return err
 	}
@@ -79,7 +101,7 @@ func (m *vBoxManage) AttachStorage(vmName string, controllerName string, port in
 	cmd.Args = append(cmd.Args, storageType)
 	cmd.Args = append(cmd.Args, "--medium")
 	cmd.Args = append(cmd.Args, medium)
-	_, err := m.execute(cmd)
+	_, _, err := m.execute(cmd)
 	if err != nil {
 		return err
 	}
@@ -96,17 +118,56 @@ func (m *vBoxManage) CreateMedium(mediumType string, filePath string, size int32
 	cmd.Args = append(cmd.Args, fmt.Sprintf("%d", size))
 	cmd.Args = append(cmd.Args, "--format")
 	cmd.Args = append(cmd.Args, format)
-	r, err := m.execute(cmd)
+	_, _, err := m.execute(cmd)
 	if err != nil {
-		println(fmt.Sprintf("%s", r))
 		return err
 	}
 	return nil
 }
 
-func (m *vBoxManage) execute(cmd *exec.Cmd) ([]byte, error) {
-	res, err := cmd.CombinedOutput()
-	return res, err
+func (m *vBoxManage) VMInfo(name string) (*VirtualMachine, error) {
+	cmd := exec.Command("VBoxManage")
+	cmd.Args = append(cmd.Args, "showvminfo")
+	cmd.Args = append(cmd.Args, name)
+	out, _, err := m.execute(cmd)
+	if err != nil {
+		return nil, err
+	}
+	vmInfo := m.parseOutput(out)
+	return &VirtualMachine{
+		UUID:       vmInfo["UUID"],
+		Name:       vmInfo["Name"],
+		GuestOS:    vmInfo["Guest OS"],
+		ConfigFile: vmInfo["Config File"],
+		BaseFolder: filepath.Dir(vmInfo["Config File"]),
+	}, nil
+}
+
+func (m *vBoxManage) parseOutput(out string) map[string]string {
+	s := bufio.NewScanner(strings.NewReader(out))
+	line := regexp.MustCompile(`(.*): *(.*)`)
+	vmInfo := map[string]string{}
+	for s.Scan() {
+		match := line.FindStringSubmatch(s.Text())
+		if match == nil {
+			continue
+		}
+
+		if len(match) < 3 {
+			continue
+		}
+		vmInfo[match[1]] = match[2]
+	}
+	return vmInfo
+}
+
+func (m *vBoxManage) execute(cmd *exec.Cmd) (string, string, error) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }
 
 // NewVBoxManage ...
