@@ -1,3 +1,3 @@
-module go-virtualbox
+module github.com/namaggarwal/go-virtualbox
 
 go 1.14
