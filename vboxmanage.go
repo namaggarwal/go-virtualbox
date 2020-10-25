@@ -27,6 +27,7 @@ type IVBoxManage interface {
 	AttachStorage(vmName string, controllerName string, port int32, device int32, storageType string, medium string) error
 	CreateMedium(mediumType string, filePath string, size int32, format string) error
 	VMInfo(name string) (*VirtualMachine, error)
+	UnRegisterVM(name string, deleteFiles bool) error
 }
 
 // VBoxManage ...
@@ -141,6 +142,22 @@ func (m *vBoxManage) VMInfo(name string) (*VirtualMachine, error) {
 		ConfigFile: vmInfo["Config File"],
 		BaseFolder: filepath.Dir(vmInfo["Config File"]),
 	}, nil
+}
+
+func (m *vBoxManage) UnRegisterVM(name string, deleteFiles bool) error {
+	cmd := exec.Command("VBoxManage")
+	cmd.Args = append(cmd.Args, "unregistervm")
+	cmd.Args = append(cmd.Args, name)
+	if deleteFiles {
+		cmd.Args = append(cmd.Args, "--delete")
+
+	}
+	_, _, err := m.execute(cmd)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (m *vBoxManage) parseOutput(out string) map[string]string {
